@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Output files (don't commit daily reports)
+vendorstockreport_*.csv
+vendorheadlinereport_*.csv
+vendor_monitor_*.log
+
+# Environment variables (don't commit API keys!)
+.env
+
+# HuggingFace/Transformers cache
+.cache/
+models/
+
+# Test outputs
+/reports/
+/logs/
+*.csv
+*.log
+
+# Backup files
+*.bak
+*.backup
+api_key.txt

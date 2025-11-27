@@ -1,0 +1,8 @@
+yfinance>=0.2.40
+vaderSentiment>=3.3.2
+newsapi-python>=0.2.7
+
+# FinBERT for financial sentiment analysis (CPU-compatible)
+# Note: Install torch separately - see requirements-finbert.txt
+transformers>=4.30.0
+sentencepiece>=0.1.99
