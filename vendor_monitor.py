@@ -261,10 +261,57 @@ def get_stock_data(symbol: str, max_retries: int = 3) -> Tuple[float, float, int
                 return (0.0, 0.0, 0)
 
 
+def get_smart_search_queries(company_name: str, symbol: str) -> List[str]:
+    """
+    Generate multiple search query variations for better news matching
+
+    Args:
+        company_name: Full company name
+        symbol: Stock ticker symbol
+
+    Returns:
+        List of search queries to try in order
+    """
+    queries = []
+
+    if company_name:
+        # Remove common corporate suffixes
+        suffixes = [
+            ' Corporation', ' Corp.', ' Corp',
+            ' Incorporated', ' Inc.', ' Inc',
+            ' Company', ' Co.', ' Co',
+            ' Limited', ' Ltd.', ' Ltd',
+            ' Holdings', ' Holding Corporation', ' Holding Corp.',
+            ' LLC', ' L.L.C.', ' PLC', ' Group'
+        ]
+
+        short_name = company_name
+        for suffix in suffixes:
+            if short_name.endswith(suffix):
+                short_name = short_name[:-len(suffix)].strip()
+                break
+
+        # Try short name first (e.g., "Paylocity" instead of "Paylocity Holding Corp.")
+        if short_name != company_name:
+            queries.append(short_name)
+
+        # Then try full company name
+        queries.append(company_name)
+
+        # Try combining short name with ticker
+        if short_name != company_name:
+            queries.append(f"{short_name} {symbol}")
+
+    # Finally try ticker alone
+    queries.append(symbol)
+
+    return queries
+
+
 def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
                       max_articles: int = 10, max_retries: int = 3) -> List[Dict[str, str]]:
     """
-    Fetch news articles for a given symbol using NewsAPI with retry logic
+    Fetch news articles for a given symbol using NewsAPI with retry logic and smart search
 
     Args:
         newsapi: NewsAPI client instance
@@ -276,77 +323,91 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
     Returns:
         List of article dictionaries with 'title', 'description', and 'content'
     """
-    query = company_name if company_name else symbol
+    # Generate smart search queries
+    search_queries = get_smart_search_queries(company_name, symbol)
 
-    for attempt in range(max_retries):
-        try:
-            logger.debug(f"Fetching news for {symbol} (attempt {attempt + 1}/{max_retries}) with query: '{query}'")
+    # Try each query until we find articles
+    for query_idx, query in enumerate(search_queries):
+        logger.debug(f"Trying search query {query_idx + 1}/{len(search_queries)}: '{query}'")
 
-            # Get news from the past 7 days
-            response = newsapi.get_everything(
-                q=query,
-                language='en',
-                sort_by='publishedAt',
-                page_size=max_articles
-            )
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"Fetching news for {symbol} (attempt {attempt + 1}/{max_retries}) with query: '{query}'")
 
-            if not response or response.get('status') != 'ok':
-                logger.warning(f"Invalid response from NewsAPI for {symbol}")
-                return []
+                # Get news from the past 7 days
+                response = newsapi.get_everything(
+                    q=query,
+                    language='en',
+                    sort_by='publishedAt',
+                    page_size=max_articles
+                )
 
-            articles = response.get('articles', [])
+                if not response or response.get('status') != 'ok':
+                    logger.warning(f"Invalid response from NewsAPI for {symbol} with query '{query}'")
+                    break  # Try next query
 
-            if not articles:
-                logger.info(f"No news articles found for {symbol}")
-                return []
+                articles = response.get('articles', [])
 
-            article_list = []
-            for article in articles[:max_articles]:
-                title = article.get('title', '')
-                description = article.get('description', '')
-                content = article.get('content', '')
+                if not articles:
+                    logger.debug(f"No articles found with query '{query}', trying next query...")
+                    break  # Try next query
 
-                # Skip removed articles
-                if title and title != '[Removed]':
-                    # Combine description and content for full text analysis
-                    full_text = f"{title}. {description} {content}".strip()
+                # Found articles! Process them
+                article_list = []
+                for article in articles[:max_articles]:
+                    title = article.get('title', '')
+                    description = article.get('description', '')
+                    content = article.get('content', '')
 
-                    article_list.append({
-                        'title': title,
-                        'description': description,
-                        'content': content,
-                        'full_text': full_text
-                    })
+                    # Skip removed articles
+                    if title and title != '[Removed]':
+                        # Combine description and content for full text analysis
+                        full_text = f"{title}. {description} {content}".strip()
 
-            logger.debug(f"Successfully fetched {len(article_list)} articles for {symbol}")
-            return article_list
+                        article_list.append({
+                            'title': title,
+                            'description': description,
+                            'content': content,
+                            'full_text': full_text
+                        })
 
-        except NewsAPIException as e:
-            if 'rateLimited' in str(e) or '429' in str(e):
-                logger.error(f"NewsAPI rate limit exceeded for {symbol}: {e}")
-                return []
-            elif 'apiKeyInvalid' in str(e) or '401' in str(e):
-                logger.error(f"Invalid NewsAPI key: {e}")
-                raise  # Re-raise to stop execution
-            else:
-                logger.warning(f"NewsAPI error for {symbol} (attempt {attempt + 1}): {e}")
+                if article_list:
+                    logger.info(f"Successfully fetched {len(article_list)} articles for {symbol} using query '{query}'")
+                    return article_list
+                else:
+                    logger.debug(f"All articles were removed for query '{query}', trying next query...")
+                    break  # Try next query
+
+            except NewsAPIException as e:
+                if 'rateLimited' in str(e) or '429' in str(e):
+                    logger.error(f"NewsAPI rate limit exceeded for {symbol}: {e}")
+                    return []
+                elif 'apiKeyInvalid' in str(e) or '401' in str(e):
+                    logger.error(f"Invalid NewsAPI key: {e}")
+                    raise  # Re-raise to stop execution
+                else:
+                    logger.warning(f"NewsAPI error for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt
+                        logger.debug(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.debug(f"Failed query '{query}' after {max_retries} attempts, trying next query...")
+                        break  # Try next query
+
+            except Exception as e:
+                logger.warning(f"Unexpected error fetching news for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt
                     logger.debug(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                 else:
-                    logger.error(f"Failed to fetch news for {symbol} after {max_retries} attempts")
-                    return []
+                    logger.debug(f"Failed query '{query}' after {max_retries} attempts, trying next query...")
+                    break  # Try next query
 
-        except Exception as e:
-            logger.warning(f"Unexpected error fetching news for {symbol} (attempt {attempt + 1}): {e}")
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.debug(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"Failed to fetch news for {symbol} after {max_retries} attempts: {e}")
-                return []
+    # If we exhausted all queries and found nothing
+    logger.info(f"No news articles found for {symbol} after trying {len(search_queries)} different search queries")
+    return []
 
 
 def get_max_sentiment(sentiments: List[str]) -> str:
