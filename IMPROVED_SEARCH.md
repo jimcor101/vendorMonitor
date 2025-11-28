@@ -17,12 +17,15 @@ For "Paylocity Holding Corp." (PCTY), the system now tries in order:
 
 ### Corporate Suffixes Removed
 
-- Corporation, Corp., Corp
-- Incorporated, Inc., Inc
-- Company, Co., Co
-- Limited, Ltd., Ltd
-- Holdings, Holding Corporation, Holding Corp.
-- LLC, L.L.C., PLC, Group
+The system checks for longer/more specific suffixes first to ensure optimal stripping:
+
+**Priority order:**
+1. Holding Corporation, Holding Corp. (checked first)
+2. Corporation, Incorporated, Holdings, Company, Limited
+3. Corp., Inc., Co., Ltd. (checked after full words)
+4. L.L.C., LLC, PLC, Group
+
+This ordering ensures "Paylocity Holding Corp." becomes "Paylocity" (not "Paylocity Holding")
 
 ### How It Works
 
@@ -51,19 +54,23 @@ The system:
 
 ### Example Output
 
+**PCTY (Paylocity Holding Corp.) - Success on first query:**
+
 ```
 [DEBUG] Trying search query 1/4: 'Paylocity'
 [DEBUG] Fetching news for PCTY (attempt 1/3) with query: 'Paylocity'
 [INFO] Successfully fetched 10 articles for PCTY using query 'Paylocity'
 ```
 
-Or if first query fails:
+Result: 10 highly relevant financial articles about Paylocity's stock performance and analyst ratings.
+
+**If first query fails, automatic fallback:**
 
 ```
-[DEBUG] Trying search query 1/4: 'Paylocity'
-[DEBUG] No articles found with query 'Paylocity', trying next query...
-[DEBUG] Trying search query 2/4: 'Paylocity Holding Corp.'
-[INFO] Successfully fetched 5 articles for PCTY using query 'Paylocity Holding Corp.'
+[DEBUG] Trying search query 1/4: 'ExampleCo'
+[DEBUG] No articles found with query 'ExampleCo', trying next query...
+[DEBUG] Trying search query 2/4: 'ExampleCo Corporation'
+[INFO] Successfully fetched 5 articles for EXMP using query 'ExampleCo Corporation'
 ```
 
 ### Testing
