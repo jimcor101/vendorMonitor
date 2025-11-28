@@ -275,14 +275,16 @@ def get_smart_search_queries(company_name: str, symbol: str) -> List[str]:
     queries = []
 
     if company_name:
-        # Remove common corporate suffixes
+        # Remove common corporate suffixes (check longer/more specific suffixes first)
         suffixes = [
-            ' Corporation', ' Corp.', ' Corp',
-            ' Incorporated', ' Inc.', ' Inc',
-            ' Company', ' Co.', ' Co',
-            ' Limited', ' Ltd.', ' Ltd',
-            ' Holdings', ' Holding Corporation', ' Holding Corp.',
-            ' LLC', ' L.L.C.', ' PLC', ' Group'
+            ' Holding Corporation', ' Holding Corp.',
+            ' Corporation', ' Incorporated',
+            ' Holdings', ' Company', ' Limited',
+            ' Corp.', ' Corp',
+            ' Inc.', ' Inc',
+            ' Co.', ' Co',
+            ' Ltd.', ' Ltd',
+            ' L.L.C.', ' LLC', ' PLC', ' Group'
         ]
 
         short_name = company_name
