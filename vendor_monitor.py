@@ -434,15 +434,20 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
 
 def get_max_sentiment(sentiments: List[str]) -> str:
     """
-    Determine the maximum (most positive) sentiment from a list
+    Determine aggregate sentiment from a list using smart weighting
 
-    Ranking: bullish > neutral > bearish
+    Logic:
+    1. If all same sentiment → return that sentiment
+    2. If both bullish and bearish present → neutral (truly mixed)
+    3. If only bearish + neutral (no bullish) → bearish (negative bias)
+    4. If only bullish + neutral (no bearish) → bullish (positive bias)
+    5. If only one sentiment type → return that sentiment
 
     Args:
         sentiments: List of sentiment strings
 
     Returns:
-        Maximum sentiment value
+        Aggregate sentiment value
     """
     if not sentiments or all(s == "N/A" for s in sentiments):
         return "N/A"
@@ -453,12 +458,46 @@ def get_max_sentiment(sentiments: List[str]) -> str:
     if not valid_sentiments:
         return "N/A"
 
-    # Priority: bullish > neutral > bearish
-    if "bullish" in valid_sentiments:
+    # Count each sentiment type
+    bullish_count = valid_sentiments.count("bullish")
+    bearish_count = valid_sentiments.count("bearish")
+    neutral_count = valid_sentiments.count("neutral")
+
+    # If all the same sentiment
+    if bullish_count == len(valid_sentiments):
         return "bullish"
-    if "neutral" in valid_sentiments:
+    if bearish_count == len(valid_sentiments):
+        return "bearish"
+    if neutral_count == len(valid_sentiments):
         return "neutral"
-    return "bearish"
+
+    # If both bullish and bearish present → use majority rule
+    if bullish_count > 0 and bearish_count > 0:
+        # Clear majority bearish (more than 2x bullish)
+        if bearish_count >= bullish_count * 2:
+            return "bearish"
+        # Clear majority bullish (more than 2x bearish)
+        if bullish_count >= bearish_count * 2:
+            return "bullish"
+        # Majority bearish (more bearish than bullish)
+        if bearish_count > bullish_count:
+            return "bearish"
+        # Majority bullish (more bullish than bearish)
+        if bullish_count > bearish_count:
+            return "bullish"
+        # Exactly equal → truly mixed → neutral
+        return "neutral"
+
+    # If only bearish + neutral (no bullish) → lean bearish
+    if bearish_count > 0 and bullish_count == 0:
+        return "bearish"
+
+    # If only bullish + neutral (no bearish) → lean bullish
+    if bullish_count > 0 and bearish_count == 0:
+        return "bullish"
+
+    # Fallback (shouldn't reach here)
+    return "neutral"
 
 
 def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer: str = 'vader') -> None:
