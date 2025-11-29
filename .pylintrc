@@ -1,0 +1,14 @@
+[MESSAGES CONTROL]
+# Disable complexity warnings that would require major refactoring
+disable=
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-nested-blocks,
+    broad-exception-caught,
+    global-statement,
+    inconsistent-return-statements
+
+[FORMAT]
+# Maximum line length
+max-line-length=100
