@@ -328,84 +328,108 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
     # Generate smart search queries
     search_queries = get_smart_search_queries(company_name, symbol)
 
+    # Define US business news domains
+    us_business_domains = (
+        'wsj.com,cnbc.com,bloomberg.com,reuters.com,marketwatch.com,'
+        'barrons.com,ft.com,businessinsider.com,seekingalpha.com,'
+        'fool.com,investors.com,finance.yahoo.com'
+    )
+
     # Try each query until we find articles
     for query_idx, query in enumerate(search_queries):
         logger.debug(f"Trying search query {query_idx + 1}/{len(search_queries)}: '{query}'")
 
-        for attempt in range(max_retries):
-            try:
-                logger.debug(f"Fetching news for {symbol} (attempt {attempt + 1}/{max_retries}) with query: '{query}'")
+        # Try with US business domains first, then fallback to broader search if needed
+        for use_domains in [True, False]:
+            if use_domains:
+                logger.debug(f"Searching US business sources for: '{query}'")
+            else:
+                logger.debug(f"No results from US business sources, trying broader search for: '{query}'")
 
-                # Get news from the past 7 days
-                response = newsapi.get_everything(
-                    q=query,
-                    language='en',
-                    sort_by='publishedAt',
-                    page_size=max_articles
-                )
+            for attempt in range(max_retries):
+                try:
+                    logger.debug(f"Fetching news for {symbol} (attempt {attempt + 1}/{max_retries}) with query: '{query}'")
 
-                if not response or response.get('status') != 'ok':
-                    logger.warning(f"Invalid response from NewsAPI for {symbol} with query '{query}'")
-                    break  # Try next query
+                    # Get news - prefer US business sources, fallback to broader search
+                    if use_domains:
+                        response = newsapi.get_everything(
+                            q=query,
+                            domains=us_business_domains,
+                            language='en',
+                            sort_by='publishedAt',
+                            page_size=max_articles
+                        )
+                    else:
+                        response = newsapi.get_everything(
+                            q=query,
+                            language='en',
+                            sort_by='publishedAt',
+                            page_size=max_articles
+                        )
 
-                articles = response.get('articles', [])
+                    if not response or response.get('status') != 'ok':
+                        logger.warning(f"Invalid response from NewsAPI for {symbol} with query '{query}'")
+                        break  # Try next attempt strategy
 
-                if not articles:
-                    logger.debug(f"No articles found with query '{query}', trying next query...")
-                    break  # Try next query
+                    articles = response.get('articles', [])
 
-                # Found articles! Process them
-                article_list = []
-                for article in articles[:max_articles]:
-                    title = article.get('title', '')
-                    description = article.get('description', '')
-                    content = article.get('content', '')
+                    if not articles:
+                        logger.debug(f"No articles found with query '{query}'")
+                        break  # Try next attempt strategy
 
-                    # Skip removed articles
-                    if title and title != '[Removed]':
-                        # Combine description and content for full text analysis
-                        full_text = f"{title}. {description} {content}".strip()
+                    # Found articles! Process them
+                    article_list = []
+                    for article in articles[:max_articles]:
+                        title = article.get('title', '')
+                        description = article.get('description', '')
+                        content = article.get('content', '')
 
-                        article_list.append({
-                            'title': title,
-                            'description': description,
-                            'content': content,
-                            'full_text': full_text
-                        })
+                        # Skip removed articles
+                        if title and title != '[Removed]':
+                            # Combine description and content for full text analysis
+                            full_text = f"{title}. {description} {content}".strip()
 
-                if article_list:
-                    logger.info(f"Successfully fetched {len(article_list)} articles for {symbol} using query '{query}'")
-                    return article_list
-                else:
-                    logger.debug(f"All articles were removed for query '{query}', trying next query...")
-                    break  # Try next query
+                            article_list.append({
+                                'title': title,
+                                'description': description,
+                                'content': content,
+                                'full_text': full_text
+                            })
 
-            except NewsAPIException as e:
-                if 'rateLimited' in str(e) or '429' in str(e):
-                    logger.error(f"NewsAPI rate limit exceeded for {symbol}: {e}")
-                    return []
-                elif 'apiKeyInvalid' in str(e) or '401' in str(e):
-                    logger.error(f"Invalid NewsAPI key: {e}")
-                    raise  # Re-raise to stop execution
-                else:
-                    logger.warning(f"NewsAPI error for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
+                    if article_list:
+                        source_type = "US business sources" if use_domains else "broader search"
+                        logger.info(f"Successfully fetched {len(article_list)} articles for {symbol} using query '{query}' ({source_type})")
+                        return article_list
+                    else:
+                        logger.debug(f"All articles were removed for query '{query}'")
+                        break  # Try next attempt strategy
+
+                except NewsAPIException as e:
+                    if 'rateLimited' in str(e) or '429' in str(e):
+                        logger.error(f"NewsAPI rate limit exceeded for {symbol}: {e}")
+                        return []
+                    elif 'apiKeyInvalid' in str(e) or '401' in str(e):
+                        logger.error(f"Invalid NewsAPI key: {e}")
+                        raise  # Re-raise to stop execution
+                    else:
+                        logger.warning(f"NewsAPI error for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
+                        if attempt < max_retries - 1:
+                            wait_time = 2 ** attempt
+                            logger.debug(f"Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)
+                        else:
+                            logger.debug(f"Failed query '{query}' after {max_retries} attempts")
+                            break  # Try next attempt strategy
+
+                except Exception as e:
+                    logger.warning(f"Unexpected error fetching news for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
                     if attempt < max_retries - 1:
                         wait_time = 2 ** attempt
                         logger.debug(f"Retrying in {wait_time} seconds...")
                         time.sleep(wait_time)
                     else:
-                        logger.debug(f"Failed query '{query}' after {max_retries} attempts, trying next query...")
-                        break  # Try next query
-
-            except Exception as e:
-                logger.warning(f"Unexpected error fetching news for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    logger.debug(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    logger.debug(f"Failed query '{query}' after {max_retries} attempts, trying next query...")
-                    break  # Try next query
+                        logger.debug(f"Failed query '{query}' after {max_retries} attempts")
+                        break  # Try next attempt strategy
 
     # If we exhausted all queries and found nothing
     logger.info(f"No news articles found for {symbol} after trying {len(search_queries)} different search queries")
