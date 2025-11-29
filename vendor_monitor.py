@@ -169,10 +169,9 @@ def analyze_sentiment_finbert(text: str) -> str:
 
         if positive_score == max_score:
             return "bullish"
-        elif negative_score == max_score:
+        if negative_score == max_score:
             return "bearish"
-        else:
-            return "neutral"
+        return "neutral"
 
     except Exception as e:
         logger.warning(f"Error analyzing sentiment with FinBERT: {e}")
@@ -200,10 +199,9 @@ def analyze_sentiment_vader(text: str, analyzer: SentimentIntensityAnalyzer) -> 
         # Thresholds for sentiment classification
         if compound >= 0.05:
             return "bullish"
-        elif compound <= -0.05:
+        if compound <= -0.05:
             return "bearish"
-        else:
-            return "neutral"
+        return "neutral"
     except Exception as e:
         logger.warning(f"Error analyzing sentiment for text: {e}")
         return "neutral"
@@ -400,26 +398,24 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
                         source_type = "US business sources" if use_domains else "broader search"
                         logger.info(f"Successfully fetched {len(article_list)} articles for {symbol} using query '{query}' ({source_type})")
                         return article_list
-                    else:
-                        logger.debug(f"All articles were removed for query '{query}'")
-                        break  # Try next attempt strategy
+                    logger.debug(f"All articles were removed for query '{query}'")
+                    break  # Try next attempt strategy
 
                 except NewsAPIException as e:
                     if 'rateLimited' in str(e) or '429' in str(e):
                         logger.error(f"NewsAPI rate limit exceeded for {symbol}: {e}")
                         return []
-                    elif 'apiKeyInvalid' in str(e) or '401' in str(e):
+                    if 'apiKeyInvalid' in str(e) or '401' in str(e):
                         logger.error(f"Invalid NewsAPI key: {e}")
                         raise  # Re-raise to stop execution
+                    logger.warning(f"NewsAPI error for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt
+                        logger.debug(f"Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
                     else:
-                        logger.warning(f"NewsAPI error for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
-                        if attempt < max_retries - 1:
-                            wait_time = 2 ** attempt
-                            logger.debug(f"Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)
-                        else:
-                            logger.debug(f"Failed query '{query}' after {max_retries} attempts")
-                            break  # Try next attempt strategy
+                        logger.debug(f"Failed query '{query}' after {max_retries} attempts")
+                        break  # Try next attempt strategy
 
                 except Exception as e:
                     logger.warning(f"Unexpected error fetching news for {symbol} with query '{query}' (attempt {attempt + 1}): {e}")
@@ -460,10 +456,9 @@ def get_max_sentiment(sentiments: List[str]) -> str:
     # Priority: bullish > neutral > bearish
     if "bullish" in valid_sentiments:
         return "bullish"
-    elif "neutral" in valid_sentiments:
+    if "neutral" in valid_sentiments:
         return "neutral"
-    else:
-        return "bearish"
+    return "bearish"
 
 
 def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer: str = 'vader') -> None:
@@ -548,7 +543,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
 
     # Read input file
     try:
-        with open(input_file, 'r') as f:
+        with open(input_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             vendors = list(reader)
 
@@ -595,7 +590,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
             else:
                 stats['stock_failures'] += 1
                 stats['errors'].append(f"{symbol}: No stock data available")
-                logger.warning(f"  Stock: No data available")
+                logger.warning("  Stock: No data available")
 
             # Get news articles
             articles = get_news_articles(newsapi, symbol, company_name)
@@ -639,7 +634,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
                     'headline': 'N/A',
                     'sentiment': 'N/A'
                 })
-                logger.info(f"  News: No articles available")
+                logger.info("  News: No articles available")
 
             # Determine max sentiment for this symbol
             max_sentiment = get_max_sentiment(article_sentiments)
@@ -669,7 +664,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
     logger.info("-"*60)
 
     try:
-        with open(stock_report_file, 'w', newline='') as f:
+        with open(stock_report_file, 'w', newline='', encoding='utf-8') as f:
             fieldnames = ['symbol', 'companyname', 'closeprice', 'pctchange', 'volume', 'sentiment']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -681,7 +676,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
 
     # Write headline report
     try:
-        with open(headline_report_file, 'w', newline='') as f:
+        with open(headline_report_file, 'w', newline='', encoding='utf-8') as f:
             fieldnames = ['symbol', 'headline', 'sentiment']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
