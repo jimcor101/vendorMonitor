@@ -10,7 +10,7 @@ import os
 import time
 import logging
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import yfinance as yf
@@ -207,7 +207,7 @@ def analyze_sentiment_vader(text: str, analyzer: SentimentIntensityAnalyzer) -> 
         return "neutral"
 
 
-def get_stock_data(symbol: str, max_retries: int = 3) -> Tuple[float, float, int]:
+def get_stock_data(symbol: str, max_retries: int = 3) -> Tuple[float, float, int, float, float, float]:
     """
     Fetch stock data for a given symbol with retry logic
 
@@ -216,18 +216,18 @@ def get_stock_data(symbol: str, max_retries: int = 3) -> Tuple[float, float, int
         max_retries: Maximum number of retry attempts
 
     Returns:
-        Tuple of (close_price, pct_change, volume)
+        Tuple of (close_price, pct_change, volume, week_52_high, week_52_low, ma_200)
     """
     for attempt in range(max_retries):
         try:
             logger.debug(f"Fetching stock data for {symbol} (attempt {attempt + 1}/{max_retries})")
 
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="5d")
+            hist = ticker.history(period="1y")
 
             if hist.empty or len(hist) < 1:
                 logger.warning(f"No stock data available for {symbol}")
-                return (0.0, 0.0, 0)
+                return (0.0, 0.0, 0, 0.0, 0.0, 0.0)
 
             # Get the most recent trading day
             latest = hist.iloc[-1]
@@ -242,12 +242,25 @@ def get_stock_data(symbol: str, max_retries: int = 3) -> Tuple[float, float, int
                 pct_change = 0.0
                 logger.debug(f"Only one day of data available for {symbol}, using 0% change")
 
+            # Calculate 52-week high and low
+            week_52_high = round(hist['Close'].max(), 2)
+            week_52_low = round(hist['Close'].min(), 2)
+
+            # Calculate 200-day moving average
+            if len(hist) >= 200:
+                ma_200 = round(hist['Close'].tail(200).mean(), 2)
+            else:
+                # Use available data if less than 200 days
+                ma_200 = round(hist['Close'].mean(), 2)
+                logger.debug(f"Less than 200 days available for {symbol}, using {len(hist)}-day MA")
+
             logger.debug(f"Successfully fetched stock data for {symbol}: ${close_price} ({pct_change:+.2f}%)")
-            return (close_price, pct_change, volume)
+            logger.debug(f"  52w High: ${week_52_high}, 52w Low: ${week_52_low}, 200-day MA: ${ma_200}")
+            return (close_price, pct_change, volume, week_52_high, week_52_low, ma_200)
 
         except KeyError as e:
             logger.error(f"Invalid data format for {symbol}: {e}")
-            return (0.0, 0.0, 0)
+            return (0.0, 0.0, 0, 0.0, 0.0, 0.0)
         except Exception as e:
             logger.warning(f"Attempt {attempt + 1} failed for {symbol}: {e}")
             if attempt < max_retries - 1:
@@ -256,7 +269,7 @@ def get_stock_data(symbol: str, max_retries: int = 3) -> Tuple[float, float, int
                 time.sleep(wait_time)
             else:
                 logger.error(f"Failed to fetch stock data for {symbol} after {max_retries} attempts")
-                return (0.0, 0.0, 0)
+                return (0.0, 0.0, 0, 0.0, 0.0, 0.0)
 
 
 def get_smart_search_queries(company_name: str, symbol: str) -> List[str]:
@@ -333,6 +346,12 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
         'fool.com,investors.com,finance.yahoo.com'
     )
 
+    # Calculate date range for past 10 business days (approximately 14 calendar days)
+    today = datetime.now()
+    from_date = (today - timedelta(days=14)).strftime('%Y-%m-%d')
+
+    logger.debug(f"Searching for articles from {from_date} to today")
+
     # Try each query until we find articles
     for query_idx, query in enumerate(search_queries):
         logger.debug(f"Trying search query {query_idx + 1}/{len(search_queries)}: '{query}'")
@@ -354,6 +373,7 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
                             q=query,
                             domains=us_business_domains,
                             language='en',
+                            from_param=from_date,
                             sort_by='publishedAt',
                             page_size=max_articles
                         )
@@ -361,6 +381,7 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
                         response = newsapi.get_everything(
                             q=query,
                             language='en',
+                            from_param=from_date,
                             sort_by='publishedAt',
                             page_size=max_articles
                         )
@@ -381,17 +402,30 @@ def get_news_articles(newsapi: NewsApiClient, symbol: str, company_name: str,
                         title = article.get('title', '')
                         description = article.get('description', '')
                         content = article.get('content', '')
+                        published_at = article.get('publishedAt', '')
 
                         # Skip removed articles
                         if title and title != '[Removed]':
                             # Combine description and content for full text analysis
                             full_text = f"{title}. {description} {content}".strip()
 
+                            # Parse and format the date (NewsAPI returns ISO 8601 format)
+                            published_date = 'N/A'
+                            if published_at:
+                                try:
+                                    # Parse ISO format: 2024-12-02T10:30:00Z
+                                    dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                                    # Format as YYYY-MM-DD
+                                    published_date = dt.strftime('%Y-%m-%d')
+                                except (ValueError, AttributeError):
+                                    published_date = published_at[:10] if len(published_at) >= 10 else 'N/A'
+
                             article_list.append({
                                 'title': title,
                                 'description': description,
                                 'content': content,
-                                'full_text': full_text
+                                'full_text': full_text,
+                                'published_date': published_date
                             })
 
                     if article_list:
@@ -621,11 +655,12 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
             logger.info(f"\n[{idx}/{len(vendors)}] Processing {symbol} - {company_name}")
 
             # Get stock data
-            close_price, pct_change, volume = get_stock_data(symbol)
+            close_price, pct_change, volume, week_52_high, week_52_low, ma_200 = get_stock_data(symbol)
 
             if close_price > 0:
                 stats['stock_success'] += 1
                 logger.info(f"  Stock: ${close_price} ({pct_change:+.2f}%) Vol: {volume:,}")
+                logger.info(f"  52w High: ${week_52_high}, 52w Low: ${week_52_low}, 200-day MA: ${ma_200}")
             else:
                 stats['stock_failures'] += 1
                 stats['errors'].append(f"{symbol}: No stock data available")
@@ -657,19 +692,21 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
                     article_sentiments.append(sentiment)
                     headline_data.append({
                         'symbol': symbol,
+                        'date': article['published_date'],
                         'headline': article['title'],
                         'sentiment': sentiment
                     })
 
                     # Truncate headline for display
                     display_headline = article['title'][:75] + "..." if len(article['title']) > 75 else article['title']
-                    logger.info(f"    [{sentiment.upper()}] {display_headline}")
+                    logger.info(f"    [{sentiment.upper()}] [{article['published_date']}] {display_headline}")
             else:
                 stats['news_failures'] += 1
                 stats['errors'].append(f"{symbol}: No articles found")
                 article_sentiments.append("N/A")
                 headline_data.append({
                     'symbol': symbol,
+                    'date': 'N/A',
                     'headline': 'N/A',
                     'sentiment': 'N/A'
                 })
@@ -685,6 +722,9 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
                 'closeprice': close_price,
                 'pctchange': pct_change,
                 'volume': volume,
+                'week_52_high': week_52_high,
+                'week_52_low': week_52_low,
+                'ma_200': ma_200,
                 'sentiment': max_sentiment
             })
 
@@ -704,7 +744,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
 
     try:
         with open(stock_report_file, 'w', newline='', encoding='utf-8') as f:
-            fieldnames = ['symbol', 'companyname', 'closeprice', 'pctchange', 'volume', 'sentiment']
+            fieldnames = ['symbol', 'companyname', 'closeprice', 'pctchange', 'volume', 'week_52_high', 'week_52_low', 'ma_200', 'sentiment']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(stock_data)
@@ -716,7 +756,7 @@ def process_vendors(input_file: str, output_path: Optional[str] = None, analyzer
     # Write headline report
     try:
         with open(headline_report_file, 'w', newline='', encoding='utf-8') as f:
-            fieldnames = ['symbol', 'headline', 'sentiment']
+            fieldnames = ['symbol', 'date', 'headline', 'sentiment']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(headline_data)
